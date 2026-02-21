@@ -10,7 +10,7 @@ from models.model import *
 from tools.general import sha1_encrypt, get_model_config_sqlite
 from tools.decoration import login_required, query_decorator
 from tools.redis_tool import RedisManager
-from tools.jm import encrypt_config, main as get_model_conf
+from tools.encryption import encrypt_config, main as get_model_conf
 from config.config import Config
 import re, jwt, datetime, pika, boto3, base64, time
 import json as pack_json
