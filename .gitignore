@@ -1,0 +1,33 @@
+# mysql挂载的卷目录
+Middleware_config/mysql/mysql
+
+# rabbit挂载的卷目录
+Middleware_config/rabbitmq/rabbitmq
+
+# redis挂载的卷目录
+Middleware_config/redis/redis
+
+# vue 包目录
+vue-webpage/node_modules
+
+# vue build 目录
+vue-webpage/dist
+
+docs
+
+deepmode
+
+consumer
+
+**__pycache__
+
+Middleware_config
+
+demo
+
+# demo
+demo
+
+config/conf_base
+
+config/config_base.py
