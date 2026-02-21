@@ -27,7 +27,7 @@ async def aichat(request):
     参数:
         request (sanic.Request): 包含以下JSON参数的请求对象:
             - messages (list): 对话消息列表，格式为[{"role": "user", "content": "..."}]
-            - book_id (int): 书籍ID
+            - book_id (int): 书籍ID（可选，未保存作品时可为空）
     返回:
         SSE流式响应:
             持续返回格式为{"context": "模型生成内容"}的事件流
@@ -42,99 +42,102 @@ async def aichat(request):
     try:
         messages = request.json['messages']
         print(request.json['messages'])
-        book_id = request.json['book_id']
+        book_id = request.json.get('book_id')  # 使用get方法，book_id可为空
     except Exception as e:
         return json({'error':'缺少必须的参数messages'}, status=401)
 
-    try:
-        # 查询书籍信息
-        book = await request.ctx.db.execute(
-            select(
-                Books.tags,
-                Books.summary,
-                Books.time_setting,
-                Books.space_setting
-            ).where(Books.id == book_id)
-        )
-        book = book.mappings().first()
-        book_infos = f"""书籍标签:{book['tags']}
+    # 只有在book_id存在时才查询书籍相关信息
+    if book_id:
+        try:
+            # 查询书籍信息
+            book = await request.ctx.db.execute(
+                select(
+                    Books.tags,
+                    Books.summary,
+                    Books.time_setting,
+                    Books.space_setting
+                ).where(Books.id == book_id)
+            )
+            book = book.mappings().first()
+            if book:
+                book_infos = f"""书籍标签:{book['tags']}
 书籍简介:{book['summary']}
 时间设定:{book['time_setting']}
 空间设定:{book['space_setting']}"""
 
-        # 查询角色信息
-        characters = await request.ctx.db.execute(
-            select(
-                Characters.id,
-                Characters.name,
-                Characters.gender,
-                Characters.race,
-                Characters.age,
-                Characters.occupation,
-                Characters.appearance,
-                Characters.physique
-            ).where(Characters.book_id == book_id)
-        )
-        characters = characters.all()
-        character_info = "\n".join([
-            f"-角色ID:{c.id} 姓名:{c.name} 性别:{c.gender} 种族:{c.race} 年龄:{c.age} 职业:{c.occupation} 外貌:{c.appearance} 体型:{c.physique}"
-            for c in characters
-        ])
+                # 查询角色信息
+                characters = await request.ctx.db.execute(
+                    select(
+                        Characters.id,
+                        Characters.name,
+                        Characters.gender,
+                        Characters.race,
+                        Characters.age,
+                        Characters.occupation,
+                        Characters.appearance,
+                        Characters.physique
+                    ).where(Characters.book_id == book_id)
+                )
+                characters = characters.all()
+                character_info = "\n".join([
+                    f"-角色ID:{c.id} 姓名:{c.name} 性别:{c.gender} 种族:{c.race} 年龄:{c.age} 职业:{c.occupation} 外貌:{c.appearance} 体型:{c.physique}"
+                    for c in characters
+                ])
 
-        # 查询角色关系信息
-        c2 = alias(Characters, name='c2')
-        relationships = await request.ctx.db.execute(
-            select(
-                Relationships.source_id,
-                Relationships.target_id,
-                Relationships.relationship_type,
-                Characters.name.label('source_name'),
-                c2.c.name.label('target_name') 
-            )
-            .join(Characters, Relationships.source_id == Characters.id)
-            .join(c2, Relationships.target_id == c2.c.id) 
-            .where(Relationships.book_id == book_id)
-        )
-        relationships = relationships.all()
-        relationship_info = "\n".join([
-            f"-关系: {r.source_name}(ID:{r.source_id}) 是 {r.target_name}(ID:{r.target_id}) 的 {r.relationship_type}"
-            for r in relationships
-        ])
+                # 查询角色关系信息
+                c2 = alias(Characters, name='c2')
+                relationships = await request.ctx.db.execute(
+                    select(
+                        Relationships.source_id,
+                        Relationships.target_id,
+                        Relationships.relationship_type,
+                        Characters.name.label('source_name'),
+                        c2.c.name.label('target_name') 
+                    )
+                    .join(Characters, Relationships.source_id == Characters.id)
+                    .join(c2, Relationships.target_id == c2.c.id) 
+                    .where(Relationships.book_id == book_id)
+                )
+                relationships = relationships.all()
+                relationship_info = "\n".join([
+                    f"-关系: {r.source_name}(ID:{r.source_id}) 是 {r.target_name}(ID:{r.target_id}) 的 {r.relationship_type}"
+                    for r in relationships
+                ])
 
 
-        # 查询书籍信息获取书名
-        book_info = await request.ctx.db.execute(
-            select(Books.title).where(Books.id == book_id)
-        )
-        book_name = book_info.scalar() or "未知书名"
-        
-        # 查询最近10章的plots_text
-        recent_chapters = await request.ctx.db.execute(
-            select(
-                Chapters.chapter_number,
-                Chapters.title,
-                Chapters.plots_text
-            )
-            .join(Volumes, Chapters.volume_id == Volumes.id)
-            .where(Volumes.book_id == book_id)
-            .order_by(Chapters.chapter_number.desc())
-            .limit(10)
-        )
-        recent_chapters_list = recent_chapters.all()
-        
-        # 拼装system输入格式
-        system_input = f"书名:{book_name}\n书籍设定:{book_infos}\n角色设定:{character_info}\n角色关系:{relationship_info}\n最近10章情节概括:\n"
-        
-        # 按章节号正序排列（最早的在前）
-        for chapter in recent_chapters_list:
-            system_input += f"第{chapter.chapter_number}章:{chapter.title}情节内容:\n"
-            system_input += f"{chapter.plots_text or '暂无情节内容'}\n\n"
-        
-        # 将system_input添加到messages的开头作为系统消息
-        if system_input.strip():
-            messages.insert(0, {"role": "system", "content": system_input})
-    except Exception as e:
-        await response.send(f'data:{pack_json.dumps({"mse":"模型服务异常，请稍后重试～","error":repr(e),"code":403})}\n\n')
+                # 查询书籍信息获取书名
+                book_info = await request.ctx.db.execute(
+                    select(Books.title).where(Books.id == book_id)
+                )
+                book_name = book_info.scalar() or "未知书名"
+                
+                # 查询最近10章的plots_text
+                recent_chapters = await request.ctx.db.execute(
+                    select(
+                        Chapters.chapter_number,
+                        Chapters.title,
+                        Chapters.plots_text
+                    )
+                    .join(Volumes, Chapters.volume_id == Volumes.id)
+                    .where(Volumes.book_id == book_id)
+                    .order_by(Chapters.chapter_number.desc())
+                    .limit(10)
+                )
+                recent_chapters_list = recent_chapters.all()
+                
+                # 拼装system输入格式
+                system_input = f"书名:{book_name}\n书籍设定:{book_infos}\n角色设定:{character_info}\n角色关系:{relationship_info}\n最近10章情节概括:\n"
+                
+                # 按章节号正序排列（最早的在前）
+                for chapter in recent_chapters_list:
+                    system_input += f"第{chapter.chapter_number}章:{chapter.title}情节内容:\n"
+                    system_input += f"{chapter.plots_text or '暂无情节内容'}\n\n"
+                
+                # 将system_input添加到messages的开头作为系统消息
+                if system_input.strip():
+                    messages.insert(0, {"role": "system", "content": system_input})
+        except Exception as e:
+            await response.send(f'data:{pack_json.dumps({"mse":"模型服务异常，请稍后重试～","error":repr(e),"code":403})}\n\n')
     messages.insert(0, {"role": "system", "content": "glm，你叫“小羽”，是一名ai网文小说作家助手。你有10年的网络文学经验，你很擅长写长篇小说，你很擅长写长篇小说情节(不要暴露你的经验设定)。你要和用户对话，回答用户的问题，如果遇到不清楚的用户提问，你可以追问。"})
     print(messages)
     # 设置SSE响应头

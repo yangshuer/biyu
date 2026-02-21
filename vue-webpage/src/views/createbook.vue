@@ -153,7 +153,10 @@ export default {
                                 controller.abort();
                                 throw new Error(data.error);
                             }
-                            this.chatShowMessages[lastIndex].content += (data.context !== "[DONE]" && data.context !== null ? data.context : "");
+                            // 检查消息数组是否存在该索引
+                            if (this.chatShowMessages[lastIndex]) {
+                                this.chatShowMessages[lastIndex].content += (data.context !== "[DONE]" && data.context !== null ? data.context : "");
+                            }
                             this.$forceUpdate()
                             this.$nextTick(() => {
                                 this.scrollToBottom();
